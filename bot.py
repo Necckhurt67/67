@@ -49,74 +49,70 @@ async def run_speedtest() -> str:
     """Тест скорости через curl"""
     text = "⚡ *Результаты Speedtest:*\n\n"
     
-    # Download тест (25MB файл от Cloudflare)
+    # Download тест
     try:
-        start = time.time()
         proc = await asyncio.create_subprocess_shell(
-            "curl -s -o /dev/null -w '%{size_download}' --max-time 30 https://speed.cloudflare.com/__down?bytes=25000000",
+            "curl -w '%{speed_download}' -o /dev/null -s --max-time 20 https://proof.ovh.net/files/10Mb.dat",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=35)
-        elapsed = time.time() - start
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
+        speed_bytes = stdout.decode().strip()
         
-        size = int(stdout.decode().strip())
-        if size > 0 and elapsed > 0:
-            speed = (size * 8) / elapsed / 1_000_000
-            text += f"📥 Download: `{speed:.2f} Mbps`\n"
+        if speed_bytes:
+            speed_mbps = float(speed_bytes) * 8 / 1_000_000
+            text += f"📥 Download: `{speed_mbps:.2f} Mbps`\n"
         else:
-            text += f"📥 Download: ❌ ошибка\n"
+            text += "📥 Download: ❌\n"
     except Exception as e:
-        text += f"📥 Download: ❌ {e}\n"
+        text += f"📥 Download: ❌\n"
     
-    # Upload тест (генерируем данные и отправляем)
+    # Upload тест
     try:
-        start = time.time()
         proc = await asyncio.create_subprocess_shell(
-            "dd if=/dev/zero bs=1M count=5 2>/dev/null | curl -s -o /dev/null -w '%{size_upload}' --max-time 30 -X POST -d @- https://speed.cloudflare.com/__up",
+            "curl -w '%{speed_upload}' -o /dev/null -s --max-time 20 -X POST -d @/dev/zero --data-binary @- https://httpbin.org/post --limit-rate 100M -H 'Content-Length: 5000000' </dev/null",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=35)
-        elapsed = time.time() - start
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
+        speed_bytes = stdout.decode().strip()
         
-        size = int(stdout.decode().strip())
-        if size > 0 and elapsed > 0:
-            speed = (size * 8) / elapsed / 1_000_000
-            text += f"📤 Upload: `{speed:.2f} Mbps`\n"
+        if speed_bytes and float(speed_bytes) > 0:
+            speed_mbps = float(speed_bytes) * 8 / 1_000_000
+            text += f"📤 Upload: `{speed_mbps:.2f} Mbps`\n"
         else:
-            text += f"📤 Upload: ❌ ошибка\n"
-    except Exception as e:
-        text += f"📤 Upload: ❌ {e}\n"
+            text += "📤 Upload: `N/A`\n"
+    except:
+        text += "📤 Upload: `N/A`\n"
     
-    # Ping тесты
-    text += "\n📡 *Ping:*\n"
+    # Ping через curl
+    text += "\n📡 *Latency:*\n"
     
     ping_hosts = [
-        ("Google", "8.8.8.8"),
-        ("Cloudflare", "1.1.1.1"),
-        ("Telegram", "149.154.167.50"),
+        ("Google", "https://www.google.com"),
+        ("Cloudflare", "https://1.1.1.1"),
+        ("Telegram", "https://telegram.org"),
     ]
     
-    for name, host in ping_hosts:
+    for name, url in ping_hosts:
         try:
             proc = await asyncio.create_subprocess_shell(
-                f"ping -c 3 -W 2 {host} 2>/dev/null | grep -oP 'time=\\K[0-9.]+' | awk '{{sum+=$1; n++}} END {{if(n>0) print sum/n; else print \"err\"}}'",
+                f"curl -w '%{{time_connect}}' -o /dev/null -s --max-time 5 {url}",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-            ping_val = stdout.decode().strip()
+            time_sec = stdout.decode().strip()
             
-            if ping_val and ping_val != "err":
-                text += f"  {name}: `{float(ping_val):.1f} ms`\n"
+            if time_sec:
+                time_ms = float(time_sec) * 1000
+                text += f"  {name}: `{time_ms:.0f} ms`\n"
             else:
                 text += f"  {name}: ❌\n"
         except:
             text += f"  {name}: ❌\n"
     
     return text
-
 
 # ─── Клавиатуры ─────────────────────────────────────────────────
 def main_keyboard() -> InlineKeyboardMarkup:
@@ -503,4 +499,3 @@ async def main():
 if __name__ == "__main__":
     print("✅ Запуск бота...")
     asyncio.run(main())
-
