@@ -1,0 +1,5 @@
+# requirements.txt
+
+python-telegram-bot==21.3
+psutil==5.9.8
+speedtest-cli==2.1.3
