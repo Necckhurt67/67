@@ -359,45 +359,96 @@ async def cb_speedtest(callback: CallbackQuery):
         return
     
     await callback.message.edit_text(
-        "⚡ *Speedtest запущен...*\n\nПодожди 30-60 секунд",
+        "⚡ *Speedtest запущен...*\n\nПодожди 20-30 секунд",
         parse_mode=ParseMode.MARKDOWN
     )
     await callback.answer()
     
     try:
-        loop = asyncio.get_event_loop()
-        
-        def run_test():
-            st = speedtest.Speedtest()
-            st.get_best_server()
-            st.download()
-            st.upload()
-            return st.results.dict()
-        
-        results = await loop.run_in_executor(None, run_test)
-        
-        download = results["download"] / 1_000_000
-        upload = results["upload"] / 1_000_000
-        ping = results["ping"]
-        server = results["server"]
-        
-        text = (
-            "⚡ *Speedtest*\n\n"
-            f"📥 Download: `{download:.2f} Mbps`\n"
-            f"📤 Upload: `{upload:.2f} Mbps`\n"
-            f"📡 Ping: `{ping:.1f} ms`\n\n"
-            f"🏢 Сервер: `{server.get('sponsor', 'N/A')}`\n"
-            f"📍 Локация: `{server.get('name', 'N/A')}, {server.get('country', '')}`"
+        # Способ 1: через fast.com (Netflix)
+        proc = await asyncio.create_subprocess_shell(
+            "curl -s https://raw.githubusercontent.com/sivel/speedtest-cli/master/speedtest.py | python3 - --simple",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
         )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        output = stdout.decode().strip()
+        
+        if output and "Ping:" in output:
+            # Парсим вывод: Ping: X ms / Download: X Mbit/s / Upload: X Mbit/s
+            lines = output.split("\n")
+            text = "⚡ *Speedtest результаты:*\n\n"
+            for line in lines:
+                if "Ping:" in line:
+                    text += f"📡 {line}\n"
+                elif "Download:" in line:
+                    text += f"📥 {line}\n"
+                elif "Upload:" in line:
+                    text += f"📤 {line}\n"
+        else:
+            # Способ 2: простой тест через curl
+            text = await simple_speed_test()
         
         await callback.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=back_keyboard())
-    except Exception as e:
+        
+    except asyncio.TimeoutError:
         await callback.message.edit_text(
-            f"❌ Ошибка: `{e}`",
-            parse_mode=ParseMode.MARKDOWN,
+            "❌ Таймаут (тест занял больше 2 минут)",
             reply_markup=back_keyboard()
         )
+    except Exception as e:
+        # Fallback на простой тест
+        try:
+            text = await simple_speed_test()
+            await callback.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=back_keyboard())
+        except:
+            await callback.message.edit_text(
+                f"❌ Ошибка: `{e}`",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=back_keyboard()
+            )
 
+
+async def simple_speed_test() -> str:
+    """Простой тест скорости через скачивание файла"""
+    import time
+    
+    test_urls = [
+        ("Cloudflare", "https://speed.cloudflare.com/__down?bytes=10000000"),  # 10MB
+        ("Hetzner", "https://speed.hetzner.de/1MB.bin"),
+    ]
+    
+    text = "⚡ *Speedtest (простой):*\n\n"
+    
+    for name, url in test_urls:
+        try:
+            start = time.time()
+            proc = await asyncio.create_subprocess_shell(
+                f"curl -s -o /dev/null -w '%{{size_download}}' {url}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+            elapsed = time.time() - start
+            
+            size = int(stdout.decode().strip())
+            speed_mbps = (size * 8) / elapsed / 1_000_000
+            
+            text += f"📥 {name}: `{speed_mbps:.2f} Mbps`\n"
+        except:
+            text += f"📥 {name}: ❌ ошибка\n"
+    
+    # Пинг
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            "ping -c 3 8.8.8.8 | tail -1 | awk -F '/' '{print $5}'",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        ping = stdout.decode().strip()
+        if ping:
+            text += f"\n📡 Ping (Google): `{ping} 
 
 @dp.callback_query(F.data == "processes")
 async def cb_processes(callback: CallbackQuery):
@@ -440,3 +491,4 @@ async def main():
 if __name__ == "__main__":
     print("✅ Запуск бота...")
     asyncio.run(main())
+
