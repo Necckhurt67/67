@@ -13,7 +13,7 @@ from aiogram.enums import ParseMode
 # НАСТРОЙКИ
 # ═══════════════════════════════════════════════════════════════
 
-BOT_TOKEN = "СЮДА_ТОКЕН_БОТА"
+BOT_TOKEN = "8677838013:AAHExkHjhIUDl14j2q3O-Dh2lf08RCCHDt8"
 ADMIN_ID = 7928368527
 
 # ═══════════════════════════════════════════════════════════════
@@ -503,3 +503,4 @@ async def main():
 if __name__ == "__main__":
     print("✅ Запуск бота...")
     asyncio.run(main())
+
