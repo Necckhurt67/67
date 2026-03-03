@@ -3,25 +3,31 @@ import asyncio
 import platform
 import psutil
 import speedtest
-from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from datetime import datetime
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import Command
+from aiogram.enums import ParseMode
 
 # ═══════════════════════════════════════════════════════════════
-# НАСТРОЙКИ - ВПИШИ СЮДА СВОИ ДАННЫЕ
+# НАСТРОЙКИ
 # ═══════════════════════════════════════════════════════════════
 
 BOT_TOKEN = "8677838013:AAHExkHjhIUDl14j2q3O-Dh2lf08RCCHDt8"
-ADMIN_ID = 7928368527  # Твой Telegram ID
+ADMIN_ID = 7928368527
 
 # ═══════════════════════════════════════════════════════════════
 
 
-def is_admin(user_id):
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+
+
+def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
 
 
-def bytes_to_human(n):
+def bytes_to_human(n: int) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if abs(n) < 1024.0:
             return f"{n:.1f} {unit}"
@@ -29,7 +35,7 @@ def bytes_to_human(n):
     return f"{n:.1f} PB"
 
 
-def get_uptime():
+def get_uptime() -> str:
     boot = datetime.fromtimestamp(psutil.boot_time())
     delta = datetime.now() - boot
     days = delta.days
@@ -38,52 +44,61 @@ def get_uptime():
     return f"{days}д {hours}ч {minutes}м {seconds}с"
 
 
-# ─── Клавиатура ─────────────────────────────────────────────────
-def main_keyboard():
-    keyboard = [
+# ─── Клавиатуры ─────────────────────────────────────────────────
+def main_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton("📊 Статус", callback_data="status"),
-            InlineKeyboardButton("💾 Память", callback_data="memory"),
+            InlineKeyboardButton(text="📊 Статус", callback_data="status"),
+            InlineKeyboardButton(text="💾 Память", callback_data="memory"),
         ],
         [
-            InlineKeyboardButton("💽 Диск", callback_data="disk"),
-            InlineKeyboardButton("🔧 CPU", callback_data="cpu"),
+            InlineKeyboardButton(text="💽 Диск", callback_data="disk"),
+            InlineKeyboardButton(text="🔧 CPU", callback_data="cpu"),
         ],
         [
-            InlineKeyboardButton("⚡ Speedtest", callback_data="speedtest"),
-            InlineKeyboardButton("📋 Процессы", callback_data="processes"),
+            InlineKeyboardButton(text="⚡ Speedtest", callback_data="speedtest"),
+            InlineKeyboardButton(text="📋 Процессы", callback_data="processes"),
         ],
-    ]
-    return InlineKeyboardMarkup(keyboard)
+        [
+            InlineKeyboardButton(text="🌐 Сеть", callback_data="network"),
+            InlineKeyboardButton(text="🖥 Система", callback_data="sysinfo"),
+        ],
+    ])
 
 
-def back_keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="menu")]])
+def back_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu")]
+    ])
 
 
 # ─── Команды ────────────────────────────────────────────────────
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Доступ запрещён")
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступ запрещён")
         return
     
-    await update.message.reply_text(
+    await message.answer(
         "🖥 *Панель управления сервером*\n\nВыбери действие:",
-        parse_mode="Markdown",
+        parse_mode=ParseMode.MARKDOWN,
         reply_markup=main_keyboard()
     )
 
 
-async def cmd_shell(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+@dp.message(Command("shell", "sh"))
+async def cmd_shell(message: Message):
+    if not is_admin(message.from_user.id):
         return
     
-    if not context.args:
-        await update.message.reply_text("Использование: /shell <команда>")
+    # Получаем команду после /shell
+    command = message.text.split(maxsplit=1)
+    if len(command) < 2:
+        await message.answer("Использование: `/shell <команда>`", parse_mode=ParseMode.MARKDOWN)
         return
     
-    command = " ".join(context.args)
-    msg = await update.message.reply_text(f"⏳ Выполняю: `{command}`", parse_mode="Markdown")
+    command = command[1]
+    msg = await message.answer(f"⏳ Выполняю: `{command}`", parse_mode=ParseMode.MARKDOWN)
     
     try:
         proc = await asyncio.create_subprocess_shell(
@@ -93,166 +108,335 @@ async def cmd_shell(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
         
-        output = stdout.decode() + stderr.decode()
-        if not output:
+        output = stdout.decode("utf-8", errors="replace") + stderr.decode("utf-8", errors="replace")
+        if not output.strip():
             output = "✅ Выполнено (нет вывода)"
         
         if len(output) > 4000:
             output = output[:4000] + "\n... (обрезано)"
         
-        await msg.edit_text(f"```\n{output}\n```", parse_mode="Markdown")
+        await msg.edit_text(f"```\n{output}\n```", parse_mode=ParseMode.MARKDOWN)
     except asyncio.TimeoutError:
-        await msg.edit_text("❌ Таймаут команды")
+        await msg.edit_text("❌ Таймаут (60 сек)")
     except Exception as e:
-        await msg.edit_text(f"❌ Ошибка: {e}")
+        await msg.edit_text(f"❌ Ошибка: `{e}`", parse_mode=ParseMode.MARKDOWN)
+
+
+@dp.message(Command("help"))
+async def cmd_help(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    
+    text = """
+🖥 *Команды:*
+
+/start — главное меню
+/shell `<команда>` — выполнить shell
+/sh `<команда>` — то же самое
+/help — эта справка
+
+*Быстрый shell:*
+Просто напиши команду начиная с `$`
+Пример: `$ ls -la`
+"""
+    await message.answer(text, parse_mode=ParseMode.MARKDOWN)
+
+
+# ─── Быстрый shell через $ ──────────────────────────────────────
+@dp.message(F.text.startswith("$"))
+async def quick_shell(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    
+    command = message.text[1:].strip()
+    if not command:
+        return
+    
+    msg = await message.answer(f"⏳ `{command}`", parse_mode=ParseMode.MARKDOWN)
+    
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+        
+        output = stdout.decode("utf-8", errors="replace") + stderr.decode("utf-8", errors="replace")
+        if not output.strip():
+            output = "✅ OK"
+        
+        if len(output) > 4000:
+            output = output[:4000] + "\n..."
+        
+        await msg.edit_text(f"```\n{output}\n```", parse_mode=ParseMode.MARKDOWN)
+    except asyncio.TimeoutError:
+        await msg.edit_text("❌ Таймаут")
+    except Exception as e:
+        await msg.edit_text(f"❌ {e}")
 
 
 # ─── Кнопки ─────────────────────────────────────────────────────
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if not is_admin(query.from_user.id):
+@dp.callback_query(F.data == "menu")
+async def cb_menu(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔", show_alert=True)
         return
     
-    data = query.data
+    await callback.message.edit_text(
+        "🖥 *Панель управления сервером*\n\nВыбери действие:",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=main_keyboard()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "status")
+async def cb_status(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔", show_alert=True)
+        return
     
-    if data == "menu":
-        await query.edit_message_text(
-            "🖥 *Панель управления сервером*\n\nВыбери действие:",
-            parse_mode="Markdown",
-            reply_markup=main_keyboard()
-        )
+    cpu = psutil.cpu_percent(interval=1)
+    mem = psutil.virtual_memory()
+    disk = psutil.disk_usage("/")
+    net = psutil.net_io_counters()
     
-    elif data == "status":
-        cpu = psutil.cpu_percent(interval=1)
-        mem = psutil.virtual_memory()
-        disk = psutil.disk_usage("/")
-        net = psutil.net_io_counters()
-        
-        text = (
-            "📊 *Статус системы*\n\n"
-            f"🖥 Хост: `{platform.node()}`\n"
-            f"⏱ Uptime: `{get_uptime()}`\n\n"
-            f"🔧 CPU: `{cpu}%`\n"
-            f"💾 RAM: `{mem.percent}%` ({bytes_to_human(mem.used)}/{bytes_to_human(mem.total)})\n"
-            f"💽 Диск: `{disk.percent}%` ({bytes_to_human(disk.used)}/{bytes_to_human(disk.total)})\n\n"
-            f"📤 Отправлено: `{bytes_to_human(net.bytes_sent)}`\n"
-            f"📥 Получено: `{bytes_to_human(net.bytes_recv)}`"
-        )
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+    text = (
+        "📊 *Статус системы*\n\n"
+        f"🖥 Хост: `{platform.node()}`\n"
+        f"⏱ Uptime: `{get_uptime()}`\n\n"
+        f"🔧 CPU: `{cpu}%`\n"
+        f"💾 RAM: `{mem.percent}%` ({bytes_to_human(mem.used)}/{bytes_to_human(mem.total)})\n"
+        f"💽 Диск: `{disk.percent}%` ({bytes_to_human(disk.used)}/{bytes_to_human(disk.total)})\n\n"
+        f"📤 Отправлено: `{bytes_to_human(net.bytes_sent)}`\n"
+        f"📥 Получено: `{bytes_to_human(net.bytes_recv)}`\n"
+        f"📊 Процессов: `{len(psutil.pids())}`"
+    )
     
-    elif data == "memory":
-        mem = psutil.virtual_memory()
-        swap = psutil.swap_memory()
-        
-        text = (
-            "💾 *Память*\n\n"
-            "*RAM:*\n"
-            f"  Всего: `{bytes_to_human(mem.total)}`\n"
-            f"  Занято: `{bytes_to_human(mem.used)}` ({mem.percent}%)\n"
-            f"  Свободно: `{bytes_to_human(mem.available)}`\n\n"
-            "*Swap:*\n"
-            f"  Всего: `{bytes_to_human(swap.total)}`\n"
-            f"  Занято: `{bytes_to_human(swap.used)}` ({swap.percent}%)"
-        )
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+    await callback.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=back_keyboard())
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "memory")
+async def cb_memory(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔", show_alert=True)
+        return
     
-    elif data == "disk":
-        disk = psutil.disk_usage("/")
-        
-        text = (
-            "💽 *Диск*\n\n"
-            f"Всего: `{bytes_to_human(disk.total)}`\n"
-            f"Занято: `{bytes_to_human(disk.used)}` ({disk.percent}%)\n"
-            f"Свободно: `{bytes_to_human(disk.free)}`"
-        )
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+    mem = psutil.virtual_memory()
+    swap = psutil.swap_memory()
     
-    elif data == "cpu":
-        cpu = psutil.cpu_percent(interval=1)
-        cpu_per_core = psutil.cpu_percent(interval=1, percpu=True)
-        freq = psutil.cpu_freq()
-        
-        text = f"🔧 *CPU*\n\n"
-        text += f"Общая нагрузка: `{cpu}%`\n"
-        text += f"Ядер: `{psutil.cpu_count()}`\n"
-        
-        if freq:
-            text += f"Частота: `{freq.current:.0f} MHz`\n"
-        
-        text += "\n*По ядрам:*\n"
-        for i, p in enumerate(cpu_per_core):
-            bar = "█" * int(p / 10) + "░" * (10 - int(p / 10))
-            text += f"  {i}: [{bar}] {p}%\n"
-        
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+    def bar(percent):
+        filled = int(percent / 10)
+        return "█" * filled + "░" * (10 - filled)
     
-    elif data == "speedtest":
-        await query.edit_message_text("⚡ *Запуск Speedtest...*\n\nПодожди 30-60 секунд", parse_mode="Markdown")
-        
+    text = (
+        "💾 *Память*\n\n"
+        "*RAM:*\n"
+        f"```\n"
+        f"Всего:    {bytes_to_human(mem.total)}\n"
+        f"Занято:   {bytes_to_human(mem.used)}\n"
+        f"Свободно: {bytes_to_human(mem.available)}\n"
+        f"[{bar(mem.percent)}] {mem.percent}%\n"
+        f"```\n\n"
+        "*Swap:*\n"
+        f"```\n"
+        f"Всего:    {bytes_to_human(swap.total)}\n"
+        f"Занято:   {bytes_to_human(swap.used)}\n"
+        f"[{bar(swap.percent)}] {swap.percent}%\n"
+        f"```"
+    )
+    
+    await callback.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=back_keyboard())
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "disk")
+async def cb_disk(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔", show_alert=True)
+        return
+    
+    text = "💽 *Диски*\n\n"
+    
+    for part in psutil.disk_partitions():
         try:
-            loop = asyncio.get_event_loop()
-            
-            def run_test():
-                st = speedtest.Speedtest()
-                st.get_best_server()
-                st.download()
-                st.upload()
-                return st.results.dict()
-            
-            results = await loop.run_in_executor(None, run_test)
-            
-            download = results["download"] / 1_000_000
-            upload = results["upload"] / 1_000_000
-            ping = results["ping"]
-            
-            text = (
-                "⚡ *Speedtest*\n\n"
-                f"📥 Download: `{download:.2f} Mbps`\n"
-                f"📤 Upload: `{upload:.2f} Mbps`\n"
-                f"📡 Ping: `{ping:.1f} ms`"
+            usage = psutil.disk_usage(part.mountpoint)
+            filled = int(usage.percent / 10)
+            bar = "█" * filled + "░" * (10 - filled)
+            text += (
+                f"📁 `{part.mountpoint}`\n"
+                f"   {bytes_to_human(usage.used)} / {bytes_to_human(usage.total)}\n"
+                f"   [{bar}] {usage.percent}%\n\n"
             )
-            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
-        except Exception as e:
-            await query.edit_message_text(f"❌ Ошибка: {e}", reply_markup=back_keyboard())
+        except:
+            pass
     
-    elif data == "processes":
-        procs = []
-        for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]):
-            try:
-                procs.append(p.info)
-            except:
-                pass
+    await callback.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=back_keyboard())
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "cpu")
+async def cb_cpu(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔", show_alert=True)
+        return
+    
+    cpu = psutil.cpu_percent(interval=1)
+    cpu_per_core = psutil.cpu_percent(interval=1, percpu=True)
+    freq = psutil.cpu_freq()
+    
+    text = f"🔧 *CPU*\n\n"
+    text += f"Общая нагрузка: `{cpu}%`\n"
+    text += f"Ядер: `{psutil.cpu_count()}`\n"
+    
+    if freq:
+        text += f"Частота: `{freq.current:.0f} MHz`\n"
+    
+    try:
+        load1, load5, load15 = os.getloadavg()
+        text += f"Load: `{load1:.2f}` / `{load5:.2f}` / `{load15:.2f}`\n"
+    except:
+        pass
+    
+    text += "\n*По ядрам:*\n```\n"
+    for i, p in enumerate(cpu_per_core):
+        bar = "█" * int(p / 10) + "░" * (10 - int(p / 10))
+        text += f"Core {i}: [{bar}] {p:5.1f}%\n"
+    text += "```"
+    
+    await callback.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=back_keyboard())
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "network")
+async def cb_network(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔", show_alert=True)
+        return
+    
+    net = psutil.net_io_counters()
+    
+    text = (
+        "🌐 *Сеть*\n\n"
+        f"📤 Отправлено: `{bytes_to_human(net.bytes_sent)}`\n"
+        f"📥 Получено: `{bytes_to_human(net.bytes_recv)}`\n"
+        f"📦 Пакетов отпр: `{net.packets_sent:,}`\n"
+        f"📦 Пакетов получ: `{net.packets_recv:,}`\n"
+        f"❌ Ошибок: `{net.errin + net.errout}`\n"
+    )
+    
+    await callback.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=back_keyboard())
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "sysinfo")
+async def cb_sysinfo(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔", show_alert=True)
+        return
+    
+    uname = platform.uname()
+    
+    text = (
+        "🖥 *Система*\n\n"
+        f"💻 ОС: `{uname.system} {uname.release}`\n"
+        f"🏗 Архитектура: `{uname.machine}`\n"
+        f"🖥 Хост: `{uname.node}`\n"
+        f"🐍 Python: `{platform.python_version()}`\n"
+        f"📋 Платформа: `{platform.platform()}`\n"
+    )
+    
+    await callback.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=back_keyboard())
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "speedtest")
+async def cb_speedtest(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔", show_alert=True)
+        return
+    
+    await callback.message.edit_text(
+        "⚡ *Speedtest запущен...*\n\nПодожди 30-60 секунд",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    await callback.answer()
+    
+    try:
+        loop = asyncio.get_event_loop()
         
-        procs.sort(key=lambda x: x.get("cpu_percent") or 0, reverse=True)
-        top = procs[:10]
+        def run_test():
+            st = speedtest.Speedtest()
+            st.get_best_server()
+            st.download()
+            st.upload()
+            return st.results.dict()
         
-        text = "📋 *Топ процессов*\n\n```\n"
-        for p in top:
-            name = (p.get("name") or "?")[:15]
-            cpu = p.get("cpu_percent") or 0
-            mem = p.get("memory_percent") or 0
-            text += f"{name:15} CPU:{cpu:5.1f}% MEM:{mem:5.1f}%\n"
-        text += "```"
+        results = await loop.run_in_executor(None, run_test)
         
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=back_keyboard())
+        download = results["download"] / 1_000_000
+        upload = results["upload"] / 1_000_000
+        ping = results["ping"]
+        server = results["server"]
+        
+        text = (
+            "⚡ *Speedtest*\n\n"
+            f"📥 Download: `{download:.2f} Mbps`\n"
+            f"📤 Upload: `{upload:.2f} Mbps`\n"
+            f"📡 Ping: `{ping:.1f} ms`\n\n"
+            f"🏢 Сервер: `{server.get('sponsor', 'N/A')}`\n"
+            f"📍 Локация: `{server.get('name', 'N/A')}, {server.get('country', '')}`"
+        )
+        
+        await callback.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=back_keyboard())
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка: `{e}`",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_keyboard()
+        )
+
+
+@dp.callback_query(F.data == "processes")
+async def cb_processes(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔", show_alert=True)
+        return
+    
+    procs = []
+    for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]):
+        try:
+            procs.append(p.info)
+        except:
+            pass
+    
+    procs.sort(key=lambda x: x.get("cpu_percent") or 0, reverse=True)
+    top = procs[:10]
+    
+    text = "📋 *Топ-10 процессов*\n\n```\n"
+    text += f"{'Имя':<15} {'CPU':>6} {'MEM':>6}\n"
+    text += "-" * 30 + "\n"
+    
+    for p in top:
+        name = (p.get("name") or "?")[:15]
+        cpu = p.get("cpu_percent") or 0
+        mem = p.get("memory_percent") or 0
+        text += f"{name:<15} {cpu:>5.1f}% {mem:>5.1f}%\n"
+    
+    text += "```"
+    
+    await callback.message.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=back_keyboard())
+    await callback.answer()
 
 
 # ─── Запуск ─────────────────────────────────────────────────────
-def main():
+async def main():
     print("🚀 Бот запускается...")
-    
-    app = Application.builder().token(BOT_TOKEN).build()
-    
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("shell", cmd_shell))
-    app.add_handler(CommandHandler("sh", cmd_shell))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    
-    print("✅ Бот запущен!")
-    app.run_polling(drop_pending_updates=True)
+    await dp.start_polling(bot, skip_updates=True)
 
 
 if __name__ == "__main__":
-    main()
+    print("✅ Запуск бота...")
+    asyncio.run(main())
